@@ -1,11 +1,17 @@
 import uuid
 import json
+import pickle
 from typing import Optional, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
 from sqlalchemy.orm import selectinload
 
 from .database import ChatSession, ChatMessage, MessageRole, UploadedFile, async_session_maker
+from .redis_service import redis_client
+
+# 缓存过期时间
+SESSIONS_CACHE_TTL = 60  # 会话列表缓存 60 秒
+SESSION_DETAIL_CACHE_TTL = 300  # 会话详情缓存 5 分钟
 
 
 class ChatHistoryService:
@@ -23,18 +29,56 @@ class ChatHistoryService:
             session.add(chat_session)
             await session.commit()
             await session.refresh(chat_session)
+
+            # 使会话列表缓存失效
+            await ChatHistoryService._invalidate_sessions_cache()
+
             return chat_session
 
     @staticmethod
+    async def _invalidate_sessions_cache():
+        """使所有会话列表缓存失效"""
+        try:
+            # 删除所有以 sessions:list: 开头的缓存
+            async for key in redis_client.scan_iter(match="sessions:list:*"):
+                await redis_client.delete(key)
+        except Exception:
+            pass
+
+    @staticmethod
     async def get_session(session_id: str) -> Optional[ChatSession]:
-        """获取会话信息"""
+        """获取会话信息（带 Redis 缓存）"""
+        cache_key = f"session:detail:{session_id}"
+
+        # 尝试从 Redis 获取缓存
+        try:
+            cached = await redis_client.get(cache_key)
+            if cached:
+                return pickle.loads(cached)
+        except Exception:
+            pass
+
+        # 从数据库查询
         async with async_session_maker() as session:
             result = await session.execute(
                 select(ChatSession)
                 .options(selectinload(ChatSession.messages))
                 .where(ChatSession.id == session_id)
             )
-            return result.scalar_one_or_none()
+            chat_session = result.scalar_one_or_none()
+
+            # 写入 Redis 缓存
+            if chat_session:
+                try:
+                    await redis_client.setex(
+                        cache_key,
+                        SESSION_DETAIL_CACHE_TTL,
+                        pickle.dumps(chat_session)
+                    )
+                except Exception:
+                    pass
+
+            return chat_session
 
     @staticmethod
     async def get_all_sessions() -> List[ChatSession]:
@@ -51,7 +95,20 @@ class ChatHistoryService:
         limit: int = 9,
         search: Optional[str] = None
     ) -> Tuple[List[ChatSession], int]:
-        """分页获取会话列表，支持搜索"""
+        """分页获取会话列表，支持搜索（带 Redis 缓存）"""
+        # 构建缓存 key
+        cache_key = f"sessions:list:{page}:{limit}:{search or ''}"
+
+        # 尝试从 Redis 获取缓存
+        try:
+            cached = await redis_client.get(cache_key)
+            if cached:
+                data = pickle.loads(cached)
+                return data["sessions"], data["total"]
+        except Exception:
+            pass
+
+        # 从数据库查询
         async with async_session_maker() as session:
             # 基础查询
             query = select(ChatSession)
@@ -72,7 +129,17 @@ class ChatHistoryService:
             query = query.order_by(desc(ChatSession.updated_at)).offset(offset).limit(limit)
 
             result = await session.execute(query)
-            sessions = result.scalars().all()
+            sessions = list(result.scalars().all())
+
+            # 写入 Redis 缓存
+            try:
+                await redis_client.setex(
+                    cache_key,
+                    SESSIONS_CACHE_TTL,
+                    pickle.dumps({"sessions": sessions, "total": total})
+                )
+            except Exception:
+                pass
 
             return sessions, total
 
@@ -110,6 +177,14 @@ class ChatHistoryService:
             if chat_session:
                 await session.delete(chat_session)
                 await session.commit()
+
+                # 使缓存失效
+                try:
+                    await redis_client.delete(f"session:detail:{session_id}")
+                    await ChatHistoryService._invalidate_sessions_cache()
+                except Exception:
+                    pass
+
                 return True
             return False
 
@@ -133,6 +208,13 @@ class ChatHistoryService:
             session.add(message)
             await session.commit()
             await session.refresh(message)
+
+            # 使会话详情缓存失效
+            try:
+                await redis_client.delete(f"session:detail:{session_id}")
+            except Exception:
+                pass
+
             return message
 
     @staticmethod

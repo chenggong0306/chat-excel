@@ -59,8 +59,57 @@ body {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+/* 文件标签样式 */
+.file-chip {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  padding: 8px 12px 8px 10px;
+  background: linear-gradient(135deg, #f8f7ff 0%, #f3f1ff 100%);
+  border: 1px solid #e5e0ff;
+  border-radius: 24px;
+  font-size: 13px;
+  color: #4c1d95;
+  transition: all 0.2s ease;
+}
+
+.file-chip:hover {
+  background: linear-gradient(135deg, #f3f1ff 0%, #ebe7ff 100%);
+  border-color: #d4ccff;
+}
+
+.file-chip-name {
+  font-weight: 500;
+}
+
+.file-chip-size {
+  color: #8b7cb8;
+  font-size: 12px;
+}
+
+.file-chip-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(124, 58, 237, 0.1);
+  color: #7c3aed;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-left: 2px;
+}
+
+.file-chip-remove:hover {
+  background: #ef4444;
+  color: #fff;
+  transform: scale(1.1);
 }
 
 .upload-pill {
@@ -207,8 +256,42 @@ body {
 }
 
 .topnav-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
   color: #6b7280;
+}
+
+.topnav-home-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 6px 10px;
+  border: 1px solid #e5e0ff;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #faf9ff 0%, #f5f3ff 100%);
+  color: #7c3aed;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.topnav-home-btn:hover {
+  background: linear-gradient(135deg, #f3f0ff 0%, #ebe5ff 100%);
+  border-color: #d4ccff;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.15);
+}
+
+.topnav-home-btn svg {
+  color: #7c3aed;
+}
+
+.topnav-separator {
+  color: #d1d5db;
+  font-weight: 300;
 }
 
 .topnav-file {
@@ -220,10 +303,18 @@ body {
   padding: 8px 18px;
   border-radius: 999px;
   border: none;
-  background: linear-gradient(135deg, #f97316, #ec4899);
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
   color: #ffffff;
   font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.topnav-export:hover {
+  background: linear-gradient(135deg, #6d28d9, #9333ea);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.3);
 }
 
 .workspace-main {
@@ -801,4 +892,260 @@ body {
 .load-more-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+
+/* ========== 骨架屏样式 ========== */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 20px;
+}
+
+.skeleton-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-icon {
+  width: 48px;
+  height: 48px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+
+.skeleton-title {
+  height: 20px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+  border-radius: 4px;
+  margin-bottom: 8px;
+  width: 70%;
+}
+
+.skeleton-meta {
+  height: 14px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+  border-radius: 4px;
+  width: 50%;
+}
+
+.skeleton-chart .skeleton-preview {
+  height: 120px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+/* 会话页骨架屏 */
+.chat-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+}
+
+.skeleton-message {
+  display: flex;
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-message.user {
+  justify-content: flex-end;
+}
+
+.skeleton-message.assistant {
+  justify-content: flex-start;
+}
+
+.skeleton-message .skeleton-bubble {
+  width: 60%;
+  height: 60px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+  border-radius: 16px;
+}
+
+.skeleton-message.user .skeleton-bubble {
+  background: linear-gradient(90deg, #e8e0ff 25%, #dcd4f7 50%, #e8e0ff 75%);
+}
+
+/* ============ Typing Indicator Loading ============ */
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px;
+}
+
+.typing-indicator span {
+  width: 8px;
+  height: 8px;
+  background: #a78bfa;
+  border-radius: 50%;
+  animation: typing-bounce 1.4s infinite ease-in-out both;
+}
+
+.typing-indicator span:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0s;
+}
+
+@keyframes typing-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+
+/* ============ Markdown 渲染样式 ============ */
+.markdown-body {
+  line-height: 1.3;
+  word-wrap: break-word;
+}
+
+.markdown-body > *:first-child {
+  margin-top: 0;
+}
+
+.markdown-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin-top: 4px;
+  margin-bottom: 1px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: #1e293b;
+}
+
+.markdown-body h1 { font-size: 1.15em; }
+.markdown-body h2 { font-size: 1.08em; }
+.markdown-body h3 { font-size: 1.03em; }
+.markdown-body h4 { font-size: 1em; }
+
+.markdown-body p {
+  margin: 0;
+  line-height: 1.3;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.markdown-body li {
+  margin-bottom: 0;
+  line-height: 1.3;
+}
+
+.markdown-body li > p {
+  margin: 0;
+}
+
+.markdown-body strong {
+  font-weight: 600;
+  color: #4c1d95;
+}
+
+.markdown-body em {
+  font-style: italic;
+  color: #6b7280;
+}
+
+.markdown-body code {
+  background: #f5f5f5;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 0.85em;
+  color: #333;
+}
+
+.markdown-body pre {
+  background: #f8f9fa;
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 400px;
+  margin: 8px 0;
+  border: 1px solid #e5e7eb;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  word-break: break-all;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  color: #1f2937;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  word-break: break-all;
+}
+
+.markdown-body blockquote {
+  border-left: 4px solid #a78bfa;
+  padding-left: 16px;
+  margin: 12px 0;
+  color: #6b7280;
+  font-style: italic;
+}
+
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 16px 0;
+}
+
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid #e5e7eb;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.markdown-body th {
+  background: #f8f7ff;
+  font-weight: 600;
+}
+
+.markdown-body a {
+  color: #7c3aed;
+  text-decoration: none;
+}
+
+.markdown-body a:hover {
+  text-decoration: underline;
 }

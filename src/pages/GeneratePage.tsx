@@ -40,6 +40,7 @@ export const GeneratePage: React.FC<GeneratePageProps> = ({
           id: "m1",
           role: "assistant",
           content: `正在上传 ${files.length} 个文件...`,
+          isLoading: true,
         },
       ]);
 
@@ -63,7 +64,8 @@ export const GeneratePage: React.FC<GeneratePageProps> = ({
           {
             id: "m1",
             role: "assistant",
-            content: `正在上传 ${files.length} 个文件...`,
+            content: `已上传 ${files.length} 个文件`,
+            isLoading: false,
           },
           ...uploadMessages,
         ]);

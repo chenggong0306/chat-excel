@@ -1,17 +1,36 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from contextlib import asynccontextmanager
 import pandas as pd
+import pickle
 import io
 import uuid
 import json
+import warnings
+
+# 抑制 openpyxl 的扩展警告
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from services.llm_service import chat_with_context_multi_files, stream_chat_multi_files, extract_chart_config
 from services.database import init_db, MessageRole
 from services.chat_history_service import ChatHistoryService, FileStorageService, ChartService
+from services.redis_service import (
+    get_cached_dataframe,
+    set_cached_dataframe,
+    delete_cached_dataframe,
+    check_redis_connection,
+    close_redis,
+)
+
+# API 限流器
+limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -19,11 +38,22 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时初始化数据库
     await init_db()
+    # 检查 Redis 连接
+    redis_ok = await check_redis_connection()
+    if redis_ok:
+        print("✓ Redis 连接成功")
+    else:
+        print("⚠ Redis 连接失败，将使用本地缓存")
     yield
     # 关闭时清理资源
+    await close_redis()
 
 
 app = FastAPI(title="ChatExcel API", version="1.0.0", lifespan=lifespan)
+
+# 添加限流异常处理
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # 跨域配置
 app.add_middleware(
@@ -34,8 +64,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 内存缓存（用于临时存储 DataFrame，避免每次从数据库读取并解析）
-file_cache: dict[str, pd.DataFrame] = {}
+# 本地内存缓存（Redis 不可用时的降级方案）
+local_file_cache: dict[str, pd.DataFrame] = {}
 
 
 # 多轮对话相关模型
@@ -75,7 +105,8 @@ async def root():
 
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+@limiter.limit("10/minute")  # 每分钟最多上传 10 个文件
+async def upload_file(request: Request, file: UploadFile = File(...)):
     """
     上传 Excel 或 CSV 文件，存储到 MySQL
     返回文件ID、列名、行数、数据预览
@@ -114,8 +145,11 @@ async def upload_file(file: UploadFile = File(...)):
             file_type=file_ext.lstrip(".")
         )
 
-        # 缓存 DataFrame
-        file_cache[file_id] = df
+        # 缓存 DataFrame 到 Redis（优先）或本地
+        try:
+            await set_cached_dataframe(file_id, pickle.dumps(df))
+        except Exception:
+            local_file_cache[file_id] = df
 
         # 预览数据
         preview_df = df.head(5).copy()
@@ -134,12 +168,21 @@ async def upload_file(file: UploadFile = File(...)):
 
 
 async def get_dataframe(file_id: str) -> pd.DataFrame:
-    """从缓存或数据库获取 DataFrame"""
-    # 先检查缓存
-    if file_id in file_cache:
-        return file_cache[file_id]
+    """从缓存或数据库获取 DataFrame（优先 Redis，降级到本地缓存）"""
+    # 1. 先检查本地缓存
+    if file_id in local_file_cache:
+        return local_file_cache[file_id]
 
-    # 从数据库加载
+    # 2. 检查 Redis 缓存
+    try:
+        cached_data = await get_cached_dataframe(file_id)
+        if cached_data:
+            df = pickle.loads(cached_data)
+            return df
+    except Exception:
+        pass
+
+    # 3. 从数据库加载
     uploaded_file = await FileStorageService.get_file(file_id)
     if not uploaded_file:
         raise HTTPException(status_code=404, detail=f"文件 {file_id} 不存在")
@@ -152,8 +195,12 @@ async def get_dataframe(file_id: str) -> pd.DataFrame:
 
     df = df.fillna("")
 
-    # 缓存
-    file_cache[file_id] = df
+    # 4. 写入缓存（优先 Redis）
+    try:
+        await set_cached_dataframe(file_id, pickle.dumps(df))
+    except Exception:
+        local_file_cache[file_id] = df
+
     return df
 
 
@@ -338,7 +385,8 @@ async def chat(req: ChatRequest):
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(req: ChatRequest):
+@limiter.limit("20/minute")  # 每分钟最多 20 次对话请求
+async def chat_stream(request: Request, req: ChatRequest):
     """流式多轮对话接口 - 使用 SSE"""
     # 获取会话
     session = await ChatHistoryService.get_session(req.session_id)

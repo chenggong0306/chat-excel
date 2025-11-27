@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import asyncio
 from typing import List, Optional, AsyncGenerator
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
@@ -14,6 +15,10 @@ model = init_chat_model(
     model_provider="deepseek",
     api_key=os.getenv("DEEPSEEK_API_KEY")
 )
+
+# LLM 并发限流 - 防止 API 被限流或过载
+LLM_MAX_CONCURRENT = int(os.getenv("LLM_MAX_CONCURRENT", 10))
+llm_semaphore = asyncio.Semaphore(LLM_MAX_CONCURRENT)
 
 CHART_SYSTEM_PROMPT = """你是一个专业的数据可视化专家和数据分析助手。你可以：
 1. 根据用户提供的表格数据和需求描述，生成 ECharts 图表配置
@@ -30,15 +35,28 @@ CHART_SYSTEM_PROMPT = """你是一个专业的数据可视化专家和数据分�
 6. 图表要美观，配色协调，标题清晰
 7. 可以添加图例、tooltip、坐标轴标签等
 8. 当有多个文件时，可以在同一图表中对比展示不同文件的数据
+9. **布局要求**：必须设置 grid 配置，确保标题和图例不与图表重叠：
+   - 始终设置 grid.top 为 80 或更大（如有多行图例则设为 100-120）
+   - 设置 grid.left、grid.right、grid.bottom 确保坐标轴标签不被截断
+   - title 放在顶部居中，legend 放在 title 下方
+10. **雷达图特殊要求（非常重要）**：
+   - **数据必须归一化**：将所有指标数据转换为 0-100 的评分，不能直接使用原始数值！
+     例如：每股收益0.5元在同类中排名靠前→评分85；收入5亿在同类中排名中等→评分60
+   - 每个 indicator 的 max 统一设为 100
+   - 图例(legend)必须使用垂直布局：orient: "vertical"，放在左侧 left: 10
+   - 雷达图中心偏右：radar.center 设为 ["60%", "55%"]
+   - 确保 radar.radius 不超过 "55%"，避免指标文字被截断
+   - 只选择 5-6 个关键指标，不要太多维度
 
 当用户进行普通对话时，直接用自然语言回复即可，不需要生成图表配置。
 
 图表配置输出格式示例：
 ```json
 {
-  "title": { "text": "图表标题" },
+  "title": { "text": "图表标题", "left": "center", "top": 10 },
   "tooltip": { "trigger": "axis" },
-  "legend": { "data": ["系列1", "系列2"] },
+  "legend": { "data": ["系列1", "系列2"], "top": 40 },
+  "grid": { "top": 80, "left": 60, "right": 30, "bottom": 60 },
   "xAxis": { "type": "category", "data": ["A", "B", "C"] },
   "yAxis": { "type": "value" },
   "series": [{ "name": "系列1", "type": "bar", "data": [10, 20, 30] }]
@@ -205,19 +223,20 @@ async def stream_chat_multi_files(
     # 添加当前用户消息
     messages.append(HumanMessage(content=user_prompt))
 
-    # 使用 astream 流式输出
-    async for chunk in model.astream(messages):
-        if hasattr(chunk, 'content') and chunk.content:
-            content = chunk.content
-            if isinstance(content, str):
-                yield content
-            elif isinstance(content, list):
-                # 处理可能的列表类型内容
-                for item in content:
-                    if isinstance(item, str):
-                        yield item
-                    elif isinstance(item, dict) and 'text' in item:
-                        yield str(item['text'])
+    # 使用 astream 流式输出，带并发限流
+    async with llm_semaphore:
+        async for chunk in model.astream(messages):
+            if hasattr(chunk, 'content') and chunk.content:
+                content = chunk.content
+                if isinstance(content, str):
+                    yield content
+                elif isinstance(content, list):
+                    # 处理可能的列表类型内容
+                    for item in content:
+                        if isinstance(item, str):
+                            yield item
+                        elif isinstance(item, dict) and 'text' in item:
+                            yield str(item['text'])
 
 
 def extract_chart_config(content: str) -> Optional[dict]:

@@ -18,7 +18,8 @@ export const SessionPage: React.FC<SessionPageProps> = ({
   onBack,
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // 加载历史消息
+  const [isStreaming, setIsStreaming] = useState(false); // 是否正在流式输出（禁用输入框）
   const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null);
   const [chartCount, setChartCount] = useState(0);
   const chatListRef = useRef<ChatMessageListHandle>(null);
@@ -66,7 +67,7 @@ export const SessionPage: React.FC<SessionPageProps> = ({
 
   // 处理用户发送新消息（流式）
   const handleSend = async (text: string) => {
-    if (!sessionDetail || loading) return;
+    if (!sessionDetail || loading || isStreaming) return;
 
     const assistantMsgId = `a-${Date.now()}`;
     setMessages((prev) => [
@@ -75,7 +76,7 @@ export const SessionPage: React.FC<SessionPageProps> = ({
       { id: assistantMsgId, role: "assistant", content: "" },
     ]);
 
-    setLoading(true);
+    setIsStreaming(true);
     let streamContent = "";
 
     try {
@@ -127,7 +128,7 @@ export const SessionPage: React.FC<SessionPageProps> = ({
         },
       ]);
     } finally {
-      setLoading(false);
+      setIsStreaming(false);
     }
   };
 
@@ -149,14 +150,24 @@ export const SessionPage: React.FC<SessionPageProps> = ({
         />
         <main className="workspace-inner">
           <section className="chat-panel">
-            <ChatMessageList
-              ref={chatListRef}
-              messages={messages}
-              onChartInstancesChange={(instances) => setChartCount(instances.length)}
-            />
+            {loading && messages.length === 0 ? (
+              <div className="chat-skeleton">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className={`skeleton-message ${i % 2 === 0 ? 'user' : 'assistant'}`}>
+                    <div className="skeleton-bubble"></div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <ChatMessageList
+                ref={chatListRef}
+                messages={messages}
+                onChartInstancesChange={(instances) => setChartCount(instances.length)}
+              />
+            )}
           </section>
         </main>
-        <ChatInput onSend={handleSend} disabled={loading} />
+        <ChatInput onSend={handleSend} disabled={loading || isStreaming} />
       </div>
     </div>
   );

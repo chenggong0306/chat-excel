@@ -9,4 +9,6 @@ langchain-deepseek>=0.1.0
 sqlalchemy>=2.0.0
 aiomysql>=0.2.0
 cryptography>=42.0.0
+redis>=5.0.0
+slowapi>=0.1.9
 

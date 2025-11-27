@@ -169,7 +169,15 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onNavigate, onOpenSess
           </div>
 
           {sessionsLoading && sessions.length === 0 ? (
-            <div className="loading-state">加载中...</div>
+            <div className="skeleton-grid">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <div key={i} className="skeleton-card">
+                  <div className="skeleton-icon"></div>
+                  <div className="skeleton-title"></div>
+                  <div className="skeleton-meta"></div>
+                </div>
+              ))}
+            </div>
           ) : sessions.length === 0 ? (
             <div className="empty-state">
               {searchQuery ? `未找到包含 "${searchQuery}" 的对话` : "暂无历史对话"}
@@ -270,7 +278,15 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onNavigate, onOpenSess
           </div>
 
           {chartsLoading && charts.length === 0 ? (
-            <div className="loading-state">加载中...</div>
+            <div className="skeleton-grid">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <div key={i} className="skeleton-card skeleton-chart">
+                  <div className="skeleton-preview"></div>
+                  <div className="skeleton-title"></div>
+                  <div className="skeleton-meta"></div>
+                </div>
+              ))}
+            </div>
           ) : charts.length === 0 ? (
             <div className="empty-state">暂无图表</div>
           ) : chartViewMode === "grid" ? (

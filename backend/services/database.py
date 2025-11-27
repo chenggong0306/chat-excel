@@ -12,8 +12,16 @@ load_dotenv()
 # 数据库连接配置
 DATABASE_URL = os.getenv("CHAT_HISTORY_DB_URL", "mysql+aiomysql://root:YKHCQ1w2e3!@192.168.132.104:3307/nai_dx")
 
-# 创建异步引擎
-engine = create_async_engine(DATABASE_URL, echo=True, pool_pre_ping=True)
+# 创建异步引擎 - 生产级连接池配置
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,  # 生产环境关闭 SQL 日志
+    pool_pre_ping=True,  # 连接前检测是否可用
+    pool_size=20,  # 常驻连接数
+    max_overflow=30,  # 峰值额外连接（总共最多 50 连接）
+    pool_recycle=3600,  # 1小时回收连接，防止 MySQL 超时断开
+    pool_timeout=30,  # 获取连接超时时间
+)
 
 # 创建异步会话工厂
 async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
