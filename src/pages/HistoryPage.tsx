@@ -392,14 +392,43 @@ const ChartPreviewCard: React.FC<{
 
     const instance = echarts.init(chartRef.current);
 
-    // 简化配置用于预览
+    // 深拷贝配置，避免修改原对象
+    const config = JSON.parse(JSON.stringify(chart.chart_config));
+
+    // 针对小尺寸预览优化配置
     const previewConfig = {
-      ...chart.chart_config,
+      ...config,
       animation: false,
       tooltip: { show: false },
       legend: { show: false },
       toolbox: { show: false },
+      title: { show: false },
+      grid: { top: 15, left: 35, right: 15, bottom: 25, containLabel: false },
     };
+
+    // 简化坐标轴标签
+    if (previewConfig.xAxis) {
+      const xAxis = Array.isArray(previewConfig.xAxis) ? previewConfig.xAxis[0] : previewConfig.xAxis;
+      if (xAxis) {
+        xAxis.axisLabel = { ...(xAxis.axisLabel || {}), fontSize: 8, rotate: 30, interval: 0 };
+        xAxis.name = undefined;
+      }
+    }
+    if (previewConfig.yAxis) {
+      const yAxis = Array.isArray(previewConfig.yAxis) ? previewConfig.yAxis[0] : previewConfig.yAxis;
+      if (yAxis) {
+        yAxis.axisLabel = { ...(yAxis.axisLabel || {}), fontSize: 8 };
+        yAxis.name = undefined;
+      }
+    }
+
+    // 隐藏数据标签
+    if (Array.isArray(previewConfig.series)) {
+      previewConfig.series = previewConfig.series.map((s: Record<string, unknown>) => ({
+        ...s,
+        label: { show: false },
+      }));
+    }
 
     instance.setOption(previewConfig as echarts.EChartsOption);
 

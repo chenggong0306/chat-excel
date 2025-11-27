@@ -9,7 +9,7 @@ import enum
 
 load_dotenv()
 
-# 数据库连接配置
+# 数据库连接配置 - 使用 utf8mb4 支持 emoji
 DATABASE_URL = os.getenv("CHAT_HISTORY_DB_URL", "mysql+aiomysql://root:YKHCQ1w2e3!@192.168.132.104:3307/nai_dx")
 
 # 创建异步引擎 - 生产级连接池配置

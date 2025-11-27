@@ -249,5 +249,49 @@ def extract_chart_config(content: str) -> Optional[dict]:
         try:
             return json.loads(json_str)
         except json.JSONDecodeError:
-            pass
+            # 尝试移除 JavaScript 函数后再解析
+            cleaned_json = _remove_js_functions(json_str)
+            try:
+                return json.loads(cleaned_json)
+            except json.JSONDecodeError:
+                pass
     return None
+
+
+def _remove_js_functions(json_str: str) -> str:
+    """
+    移除 JSON 字符串中的 JavaScript 函数定义，替换为 null
+    处理类似: "color": function(params) { ... } 的情况
+    """
+    # 匹配 function(...) { ... } 模式，包括嵌套大括号
+    result = []
+    i = 0
+    while i < len(json_str):
+        # 检查是否是 function 关键字
+        if json_str[i:i+8] == 'function':
+            # 找到函数开始，需要找到对应的结束大括号
+            j = i + 8
+            # 跳过参数部分 (...)
+            while j < len(json_str) and json_str[j] != '{':
+                j += 1
+            if j < len(json_str):
+                # 找到函数体的结束位置
+                brace_count = 1
+                j += 1
+                while j < len(json_str) and brace_count > 0:
+                    if json_str[j] == '{':
+                        brace_count += 1
+                    elif json_str[j] == '}':
+                        brace_count -= 1
+                    j += 1
+                # 用 null 替换整个函数
+                result.append('null')
+                i = j
+            else:
+                result.append(json_str[i])
+                i += 1
+        else:
+            result.append(json_str[i])
+            i += 1
+
+    return ''.join(result)
