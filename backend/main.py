@@ -58,7 +58,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # 跨域配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -86,15 +86,25 @@ class ChatResponse(BaseModel):
     message: ChatMessageResponse
 
 
+class FileMetadata(BaseModel):
+    """文件元信息"""
+    file_id: str
+    filename: str
+    sheet_names: Optional[List[str]] = None
+    selected_sheets: List[str] = []
+
+
 class CreateSessionRequest(BaseModel):
     title: Optional[str] = None
     file_ids: Optional[List[str]] = None  # 改为支持多个文件
+    file_metadata: Optional[List[FileMetadata]] = None  # 文件元信息
 
 
 class SessionResponse(BaseModel):
     id: str
     title: Optional[str]
     file_ids: Optional[List[str]]  # 改为文件ID数组
+    file_metadata: Optional[List[dict]] = None  # 文件元信息
     created_at: str
     updated_at: str
 
@@ -106,33 +116,41 @@ async def root():
 
 @app.post("/api/upload")
 @limiter.limit("10/minute")  # 每分钟最多上传 10 个文件
-async def upload_file(request: Request, file: UploadFile = File(...)):
+async def upload_file(request: Request, file: UploadFile = File(...), sheet_name: Optional[str] = None):
     """
     上传 Excel 或 CSV 文件，存储到 MySQL
-    返回文件ID、列名、行数、数据预览
+    返回文件ID、列名、行数、数据预览、sheet列表（Excel文件）
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="文件名不能为空")
 
     # 检查文件类型
-    allowed_extensions = [".xlsx", ".xls", ".csv"]
+    allowed_extensions = [".xlsx", ".xls", ".xlsm", ".csv"]
     file_ext = "." + file.filename.split(".")[-1].lower()
     if file_ext not in allowed_extensions:
-        raise HTTPException(status_code=400, detail="只支持 Excel (.xlsx, .xls) 和 CSV (.csv) 文件")
+        raise HTTPException(status_code=400, detail="只支持 Excel (.xlsx, .xls, .xlsm) 和 CSV (.csv) 文件")
 
     try:
         content = await file.read()
+        sheet_names = []
+        selected_sheet = None
 
         # 解析文件
         if file_ext == ".csv":
             df = pd.read_csv(io.BytesIO(content))
         else:
-            df = pd.read_excel(io.BytesIO(content))
+            # 获取所有 sheet 名称
+            excel_file = pd.ExcelFile(io.BytesIO(content))
+            sheet_names = excel_file.sheet_names
+
+            # 使用指定的 sheet 或默认第一个
+            selected_sheet = sheet_name if sheet_name and sheet_name in sheet_names else sheet_names[0]
+            df = pd.read_excel(io.BytesIO(content), sheet_name=selected_sheet)
 
         # 处理 NaN 值，替换为 None（JSON 可序列化）
         df = df.fillna("")
 
-        # 生成文件ID
+        # 生成文件ID（如果选择了不同的 sheet，生成新的 ID）
         file_id = str(uuid.uuid4())
 
         # 存储到 MySQL
@@ -146,10 +164,12 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         )
 
         # 缓存 DataFrame 到 Redis（优先）或本地
+        # 缓存 key 包含 sheet 名称
+        cache_key = f"{file_id}:{selected_sheet}" if selected_sheet else file_id
         try:
-            await set_cached_dataframe(file_id, pickle.dumps(df))
+            await set_cached_dataframe(cache_key, pickle.dumps(df))
         except Exception:
-            local_file_cache[file_id] = df
+            local_file_cache[cache_key] = df
 
         # 预览数据
         preview_df = df.head(5).copy()
@@ -160,22 +180,27 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
             "filename": file.filename,
             "columns": df.columns.tolist(),
             "rows": len(df),
-            "preview": preview
+            "preview": preview,
+            "sheet_names": sheet_names,  # 返回所有 sheet 名称
+            "selected_sheet": selected_sheet  # 当前选择的 sheet
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"文件解析失败: {str(e)}")
 
 
-async def get_dataframe(file_id: str) -> pd.DataFrame:
+async def get_dataframe(file_id: str, sheet_name: Optional[str] = None) -> pd.DataFrame:
     """从缓存或数据库获取 DataFrame（优先 Redis，降级到本地缓存）"""
+    # 构建缓存 key（包含 sheet 名称）
+    cache_key = f"{file_id}:{sheet_name}" if sheet_name else file_id
+
     # 1. 先检查本地缓存
-    if file_id in local_file_cache:
-        return local_file_cache[file_id]
+    if cache_key in local_file_cache:
+        return local_file_cache[cache_key]
 
     # 2. 检查 Redis 缓存
     try:
-        cached_data = await get_cached_dataframe(file_id)
+        cached_data = await get_cached_dataframe(cache_key)
         if cached_data:
             df = pickle.loads(cached_data)
             return df
@@ -191,36 +216,143 @@ async def get_dataframe(file_id: str) -> pd.DataFrame:
     if uploaded_file.file_type == "csv":
         df = pd.read_csv(io.BytesIO(uploaded_file.data))
     else:
-        df = pd.read_excel(io.BytesIO(uploaded_file.data))
+        # Excel 文件支持指定 sheet
+        if sheet_name:
+            df = pd.read_excel(io.BytesIO(uploaded_file.data), sheet_name=sheet_name)
+        else:
+            df = pd.read_excel(io.BytesIO(uploaded_file.data))
 
     df = df.fillna("")
 
     # 4. 写入缓存（优先 Redis）
     try:
-        await set_cached_dataframe(file_id, pickle.dumps(df))
+        await set_cached_dataframe(cache_key, pickle.dumps(df))
     except Exception:
-        local_file_cache[file_id] = df
+        local_file_cache[cache_key] = df
 
     return df
 
 
 @app.get("/api/files/{file_id}")
-async def get_file_info(file_id: str):
+async def get_file_info(file_id: str, sheet_name: Optional[str] = None):
     """
     获取已上传文件的信息
     """
-    df = await get_dataframe(file_id)
+    df = await get_dataframe(file_id, sheet_name)
     preview_df = df.head(10).fillna("")
 
     # 获取文件元信息
     uploaded_file = await FileStorageService.get_file(file_id)
+
+    # 获取所有 sheet 名称（Excel 文件）
+    sheet_names = []
+    if uploaded_file and uploaded_file.file_type in ["xlsx", "xls", "xlsm"]:
+        try:
+            excel_file = pd.ExcelFile(io.BytesIO(uploaded_file.data))
+            sheet_names = excel_file.sheet_names
+        except Exception:
+            pass
 
     return {
         "file_id": file_id,
         "filename": uploaded_file.filename if uploaded_file else None,
         "columns": df.columns.tolist(),
         "rows": len(df),
-        "preview": preview_df.to_dict(orient="records")
+        "preview": preview_df.to_dict(orient="records"),
+        "sheet_names": sheet_names,
+        "selected_sheet": sheet_name or (sheet_names[0] if sheet_names else None)
+    }
+
+
+@app.post("/api/files/{file_id}/switch-sheet")
+async def switch_sheet(file_id: str, sheet_name: str):
+    """
+    切换 Excel 文件的 sheet，返回新的数据预览
+    """
+    uploaded_file = await FileStorageService.get_file(file_id)
+    if not uploaded_file:
+        raise HTTPException(status_code=404, detail=f"文件 {file_id} 不存在")
+
+    if uploaded_file.file_type == "csv":
+        raise HTTPException(status_code=400, detail="CSV 文件没有多个 sheet")
+
+    # 验证 sheet 名称
+    try:
+        excel_file = pd.ExcelFile(io.BytesIO(uploaded_file.data))
+        if sheet_name not in excel_file.sheet_names:
+            raise HTTPException(status_code=400, detail=f"Sheet '{sheet_name}' 不存在")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"解析文件失败: {str(e)}")
+
+    # 获取指定 sheet 的数据
+    df = await get_dataframe(file_id, sheet_name)
+    preview_df = df.head(10).fillna("")
+
+    return {
+        "file_id": file_id,
+        "filename": uploaded_file.filename,
+        "columns": df.columns.tolist(),
+        "rows": len(df),
+        "preview": preview_df.to_dict(orient="records"),
+        "sheet_names": excel_file.sheet_names,
+        "selected_sheet": sheet_name
+    }
+
+
+class MultiSheetRequest(BaseModel):
+    """多 sheet 选择请求"""
+    sheet_names: List[str]
+
+
+@app.post("/api/files/{file_id}/select-sheets")
+async def select_multiple_sheets(file_id: str, req: MultiSheetRequest):
+    """
+    选择 Excel 文件的多个 sheet，返回所有选中 sheet 的数据预览
+    每个 sheet 会生成一个独立的数据源 ID（file_id:sheet_name 格式）
+    """
+    uploaded_file = await FileStorageService.get_file(file_id)
+    if not uploaded_file:
+        raise HTTPException(status_code=404, detail=f"文件 {file_id} 不存在")
+
+    if uploaded_file.file_type == "csv":
+        raise HTTPException(status_code=400, detail="CSV 文件没有多个 sheet")
+
+    # 验证所有 sheet 名称
+    try:
+        excel_file = pd.ExcelFile(io.BytesIO(uploaded_file.data))
+        invalid_sheets = [s for s in req.sheet_names if s not in excel_file.sheet_names]
+        if invalid_sheets:
+            raise HTTPException(status_code=400, detail=f"Sheet 不存在: {', '.join(invalid_sheets)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"解析文件失败: {str(e)}")
+
+    # 加载所有选中的 sheet
+    sheets_data = []
+    for sheet_name in req.sheet_names:
+        df = await get_dataframe(file_id, sheet_name)
+        preview_df = df.head(10).fillna("")
+
+        # 使用 file_id:sheet_name 作为数据源标识
+        data_source_id = f"{file_id}:{sheet_name}"
+
+        sheets_data.append({
+            "data_source_id": data_source_id,
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "columns": df.columns.tolist(),
+            "rows": len(df),
+            "preview": preview_df.to_dict(orient="records"),
+        })
+
+    return {
+        "file_id": file_id,
+        "filename": uploaded_file.filename,
+        "sheet_names": excel_file.sheet_names,
+        "selected_sheets": sheets_data
     }
 
 
@@ -229,14 +361,21 @@ async def get_file_info(file_id: str):
 @app.post("/api/sessions", response_model=SessionResponse)
 async def create_session(req: CreateSessionRequest):
     """创建新的对话会话"""
+    # 转换文件元信息为字典格式
+    file_metadata_dicts = None
+    if req.file_metadata:
+        file_metadata_dicts = [fm.model_dump() for fm in req.file_metadata]
+
     session = await ChatHistoryService.create_session(
         file_ids=req.file_ids,
-        title=req.title
+        title=req.title,
+        file_metadata=file_metadata_dicts
     )
     return SessionResponse(
         id=session.id,
         title=session.title,
         file_ids=session.file_ids,
+        file_metadata=session.file_metadata,
         created_at=session.created_at.isoformat(),
         updated_at=session.updated_at.isoformat()
     )
@@ -283,6 +422,7 @@ async def get_session(session_id: str):
         "id": session.id,
         "title": session.title,
         "file_ids": session.file_ids,
+        "file_metadata": session.file_metadata or [],  # 返回文件元信息
         "created_at": session.created_at.isoformat(),
         "updated_at": session.updated_at.isoformat(),
         "messages": [
@@ -307,6 +447,28 @@ async def delete_session(session_id: str):
     return {"message": "会话已删除"}
 
 
+@app.delete("/api/sessions")
+async def delete_all_sessions():
+    """删除所有会话"""
+    deleted_count = await ChatHistoryService.delete_all_sessions()
+    return {"message": f"已删除 {deleted_count} 个会话", "deleted_count": deleted_count}
+
+
+class UpdateFileMetadataRequest(BaseModel):
+    """更新文件元信息请求"""
+    file_metadata: List[FileMetadata]
+
+
+@app.put("/api/sessions/{session_id}/file-metadata")
+async def update_session_file_metadata(session_id: str, req: UpdateFileMetadataRequest):
+    """更新会话的文件元信息（如 sheet 选择变化）"""
+    file_metadata_dicts = [fm.model_dump() for fm in req.file_metadata]
+    success = await ChatHistoryService.update_session_file_metadata(session_id, file_metadata_dicts)
+    if not success:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return {"message": "文件元信息已更新"}
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     """多轮对话接口 - 支持多文件"""
@@ -322,15 +484,28 @@ async def chat(req: ChatRequest):
     if req.file_ids and req.file_ids != session.file_ids:
         await ChatHistoryService.update_session_files(req.session_id, req.file_ids)
 
-    # 获取多个文件的数据
+    # 获取多个文件的数据（支持 file_id:sheet_name 格式）
     files_data = []
-    for file_id in file_ids:
+    for data_source_id in file_ids:
         try:
-            df = await get_dataframe(file_id)
-            uploaded_file = await FileStorageService.get_file(file_id)
+            # 解析 file_id:sheet_name 格式
+            if ":" in data_source_id:
+                actual_file_id, sheet_name = data_source_id.split(":", 1)
+            else:
+                actual_file_id = data_source_id
+                sheet_name = None
+
+            df = await get_dataframe(actual_file_id, sheet_name)
+            uploaded_file = await FileStorageService.get_file(actual_file_id)
+
+            # 构建显示名称（包含 sheet 名称）
+            filename = uploaded_file.filename if uploaded_file else actual_file_id
+            if sheet_name:
+                filename = f"{filename} [Sheet: {sheet_name}]"
+
             files_data.append({
-                "file_id": file_id,
-                "filename": uploaded_file.filename if uploaded_file else file_id,
+                "file_id": data_source_id,
+                "filename": filename,
                 "columns": df.columns.tolist(),
                 "data": df.to_string(index=False)
             })
@@ -400,15 +575,28 @@ async def chat_stream(request: Request, req: ChatRequest):
     if req.file_ids and req.file_ids != session.file_ids:
         await ChatHistoryService.update_session_files(req.session_id, req.file_ids)
 
-    # 获取多个文件的数据
+    # 获取多个文件的数据（支持 file_id:sheet_name 格式）
     files_data = []
-    for file_id in file_ids:
+    for data_source_id in file_ids:
         try:
-            df = await get_dataframe(file_id)
-            uploaded_file = await FileStorageService.get_file(file_id)
+            # 解析 file_id:sheet_name 格式
+            if ":" in data_source_id:
+                actual_file_id, sheet_name = data_source_id.split(":", 1)
+            else:
+                actual_file_id = data_source_id
+                sheet_name = None
+
+            df = await get_dataframe(actual_file_id, sheet_name)
+            uploaded_file = await FileStorageService.get_file(actual_file_id)
+
+            # 构建显示名称（包含 sheet 名称）
+            filename = uploaded_file.filename if uploaded_file else actual_file_id
+            if sheet_name:
+                filename = f"{filename} [Sheet: {sheet_name}]"
+
             files_data.append({
-                "file_id": file_id,
-                "filename": uploaded_file.filename if uploaded_file else file_id,
+                "file_id": data_source_id,
+                "filename": filename,
                 "columns": df.columns.tolist(),
                 "data": df.to_string(index=False)
             })

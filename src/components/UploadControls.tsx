@@ -42,7 +42,7 @@ export const UploadControls: React.FC<UploadControlsProps> = ({
       <input
         ref={excelInputRef}
         type="file"
-        accept=".xlsx,.xls"
+        accept=".xlsx,.xls,.xlsm"
         multiple={multiple}
         hidden
         onChange={handleFileChange}

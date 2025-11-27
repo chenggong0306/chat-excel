@@ -3,6 +3,7 @@ import { Sidebar } from "../components/Sidebar";
 import {
   getSessions,
   deleteSession,
+  deleteAllSessions,
   getCharts,
   deleteChart,
   SessionInfo,
@@ -39,10 +40,10 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onNavigate, onOpenSess
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // 加载会话
-  const loadSessions = useCallback(async (page: number, append: boolean = false) => {
+  const loadSessions = useCallback(async (page: number, append: boolean = false, query?: string) => {
     try {
       setSessionsLoading(true);
-      const data = await getSessions(page, 9, searchQuery || undefined);
+      const data = await getSessions(page, 9, query || undefined);
       setSessions((prev) => (append ? [...prev, ...data.items] : data.items));
       setSessionsTotal(data.total);
       setSessionsHasMore(data.has_more);
@@ -52,7 +53,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onNavigate, onOpenSess
     } finally {
       setSessionsLoading(false);
     }
-  }, [searchQuery]);
+  }, []);
 
   // 加载图表
   const loadCharts = useCallback(async (page: number, append: boolean = false) => {
@@ -70,11 +71,12 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onNavigate, onOpenSess
     }
   }, []);
 
-  // 初始加载
+  // 初始加载（只执行一次）
   useEffect(() => {
     loadSessions(1);
     loadCharts(1);
-  }, [loadSessions, loadCharts]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 搜索处理（防抖）
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -86,7 +88,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onNavigate, onOpenSess
     }
 
     searchTimeoutRef.current = setTimeout(() => {
-      loadSessions(1);
+      loadSessions(1, false, value);
     }, 300);
   };
 
@@ -100,6 +102,22 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onNavigate, onOpenSess
       setSessionsTotal((prev) => prev - 1);
     } catch (error) {
       console.error("删除失败:", error);
+    }
+  };
+
+  // 清空所有会话
+  const handleDeleteAllSessions = async () => {
+    if (sessionsTotal === 0) return;
+    if (!confirm(`确定要清空所有 ${sessionsTotal} 个历史对话吗？此操作不可恢复！`)) return;
+    try {
+      const result = await deleteAllSessions();
+      setSessions([]);
+      setSessionsTotal(0);
+      setSessionsHasMore(false);
+      alert(`已清空 ${result.deleted_count} 个历史对话`);
+    } catch (error) {
+      console.error("清空失败:", error);
+      alert("清空失败，请重试");
     }
   };
 
@@ -150,21 +168,32 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onNavigate, onOpenSess
             <h2 className="section-title">
               历史对话 {sessionsTotal > 0 && <span className="count-badge">({sessionsTotal})</span>}
             </h2>
-            <div className="view-toggle">
-              <button
-                className={`toggle-btn ${sessionViewMode === "grid" ? "active" : ""}`}
-                onClick={() => setSessionViewMode("grid")}
-                title="网格视图"
-              >
-                ⊞
-              </button>
-              <button
-                className={`toggle-btn ${sessionViewMode === "list" ? "active" : ""}`}
-                onClick={() => setSessionViewMode("list")}
-                title="列表视图"
-              >
-                ☰
-              </button>
+            <div className="section-actions">
+              {sessionsTotal > 0 && (
+                <button
+                  className="clear-all-btn"
+                  onClick={handleDeleteAllSessions}
+                  title="清空所有历史对话"
+                >
+                  🗑 清空全部
+                </button>
+              )}
+              <div className="view-toggle">
+                <button
+                  className={`toggle-btn ${sessionViewMode === "grid" ? "active" : ""}`}
+                  onClick={() => setSessionViewMode("grid")}
+                  title="网格视图"
+                >
+                  ⊞
+                </button>
+                <button
+                  className={`toggle-btn ${sessionViewMode === "list" ? "active" : ""}`}
+                  onClick={() => setSessionViewMode("list")}
+                  title="列表视图"
+                >
+                  ☰
+                </button>
+              </div>
             </div>
           </div>
 
@@ -244,7 +273,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onNavigate, onOpenSess
             <div className="load-more">
               <button
                 className="load-more-btn"
-                onClick={() => loadSessions(sessionsPage + 1, true)}
+                onClick={() => loadSessions(sessionsPage + 1, true, searchQuery)}
                 disabled={sessionsLoading}
               >
                 {sessionsLoading ? "加载中..." : `加载更多 (${sessions.length}/${sessionsTotal})`}

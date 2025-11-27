@@ -582,6 +582,28 @@ body {
   color: #1e293b;
 }
 
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.clear-all-btn {
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #dc2626;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.clear-all-btn:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
 .view-toggle {
   display: flex;
   gap: 4px;
@@ -1148,4 +1170,203 @@ body {
 
 .markdown-body a:hover {
   text-decoration: underline;
+}
+
+/* ============ Sheet 选择器样式 ============ */
+.sheet-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #f8f7ff;
+  border: 1px solid #e5e0ff;
+  border-radius: 20px;
+  font-size: 13px;
+}
+
+.sheet-label {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.sheet-select {
+  border: none;
+  background: transparent;
+  color: #7c3aed;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  padding: 2px 4px;
+}
+
+.sheet-select:disabled {
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.sheet-select option {
+  color: #374151;
+}
+
+/* Sheet 选择器面板（可折叠） */
+.sheet-selector-panel {
+  background: linear-gradient(to bottom, #f8f7ff, #f3f4f6);
+  border-bottom: 1px solid #e5e7eb;
+  transition: all 0.3s ease;
+}
+
+.sheet-selector-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 32px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sheet-selector-header:hover {
+  background: rgba(124, 58, 237, 0.05);
+}
+
+.sheet-selector-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.sheet-selector-count {
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: normal;
+  margin-left: 4px;
+}
+
+.sheet-selector-toggle {
+  background: none;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sheet-selector-toggle:hover {
+  background: #fff;
+  border-color: #7c3aed;
+  color: #7c3aed;
+}
+
+.sheet-selector-content {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 0 32px 12px;
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.sheet-selector-panel.collapsed {
+  border-bottom-color: transparent;
+}
+
+.sheet-selector-panel.collapsed .sheet-selector-header {
+  border-bottom: 1px solid #e5e7eb;
+}
+
+/* 旧的选择器栏样式（保留兼容） */
+.sheet-selector-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 32px;
+  background: linear-gradient(to bottom, #f8f7ff, #f3f4f6);
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.sheet-selector-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sheet-file-name {
+  font-size: 13px;
+  color: #6b7280;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 多选 Sheet 样式 */
+.sheet-multi-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #f8f7ff;
+  border: 1px solid #e5e0ff;
+  border-radius: 12px;
+}
+
+.sheet-checkbox-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sheet-checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 13px;
+}
+
+.sheet-checkbox-item:hover {
+  border-color: #7c3aed;
+  background: #faf9ff;
+}
+
+.sheet-checkbox-item:has(input:checked) {
+  border-color: #7c3aed;
+  background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+}
+
+.sheet-checkbox-item input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #7c3aed;
+  cursor: pointer;
+}
+
+.sheet-checkbox-label {
+  color: #374151;
+  user-select: none;
+}
+
+.sheet-multi-file-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 300px;
 }

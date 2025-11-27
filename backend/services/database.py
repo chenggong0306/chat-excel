@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, String, Text, DateTime, Integer, ForeignKey, Enum as SQLEnum, JSON, LargeBinary
+from sqlalchemy import Column, String, Text, DateTime, Integer, ForeignKey, Enum as SQLEnum, JSON, LargeBinary, text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -57,6 +57,7 @@ class ChatSession(Base):
     id = Column(String(36), primary_key=True)
     title = Column(String(255), nullable=True, comment="会话标题")
     file_ids = Column(JSON, nullable=True, comment="关联的文件ID数组")
+    file_metadata = Column(JSON, nullable=True, comment="文件元信息：[{file_id, filename, sheet_names, selected_sheets}]")
     created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
 
@@ -84,6 +85,33 @@ async def init_db():
     """初始化数据库，创建所有表"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # 执行数据库迁移
+    await run_migrations()
+
+
+async def run_migrations():
+    """执行数据库迁移 - 添加缺失的列"""
+    async with async_session_maker() as session:
+        try:
+            # 检查 file_metadata 列是否存在
+            result = await session.execute(
+                text("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'chat_sessions' AND COLUMN_NAME = 'file_metadata'")
+            )
+            exists = result.scalar()
+
+            if not exists:
+                # 添加 file_metadata 列
+                await session.execute(
+                    text("ALTER TABLE chat_sessions ADD COLUMN file_metadata JSON NULL COMMENT '文件元信息'")
+                )
+                await session.commit()
+                print("Migration: Added 'file_metadata' column to chat_sessions table")
+            else:
+                print("Migration: 'file_metadata' column already exists")
+        except Exception as e:
+            print(f"Migration error: {e}")
+            await session.rollback()
 
 
 async def get_session() -> AsyncSession:

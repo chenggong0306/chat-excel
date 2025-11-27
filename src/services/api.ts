@@ -6,13 +6,24 @@ export interface UploadResponse {
   columns: string[];
   rows: number;
   preview: Record<string, unknown>[];
+  sheet_names?: string[];  // Excel 文件的所有 sheet 名称
+  selected_sheet?: string;  // 当前选择的 sheet
 }
 
 // 会话相关接口
+// 文件元信息
+export interface FileMetadataInfo {
+  file_id: string;
+  filename: string;
+  sheet_names?: string[] | null;
+  selected_sheets: string[];
+}
+
 export interface SessionInfo {
   id: string;
   title: string | null;
   file_ids: string[] | null;  // 支持多文件
+  file_metadata?: FileMetadataInfo[] | null;  // 文件元信息
   created_at: string;
   updated_at: string;
 }
@@ -38,11 +49,16 @@ export interface ChatRequestPayload {
 /**
  * 上传 Excel/CSV 文件
  */
-export async function uploadFile(file: File): Promise<UploadResponse> {
+export async function uploadFile(file: File, sheetName?: string): Promise<UploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${API_BASE}/api/upload`, {
+  let url = `${API_BASE}/api/upload`;
+  if (sheetName) {
+    url += `?sheet_name=${encodeURIComponent(sheetName)}`;
+  }
+
+  const response = await fetch(url, {
     method: "POST",
     body: formData,
   });
@@ -50,6 +66,61 @@ export async function uploadFile(file: File): Promise<UploadResponse> {
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || "上传失败");
+  }
+
+  return response.json();
+}
+
+/**
+ * 切换 Excel 文件的 sheet
+ */
+export async function switchSheet(fileId: string, sheetName: string): Promise<UploadResponse> {
+  const response = await fetch(`${API_BASE}/api/files/${fileId}/switch-sheet?sheet_name=${encodeURIComponent(sheetName)}`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || "切换 Sheet 失败");
+  }
+
+  return response.json();
+}
+
+/**
+ * 选择多个 sheet 的响应
+ */
+export interface SheetData {
+  data_source_id: string;
+  file_id: string;
+  sheet_name: string;
+  columns: string[];
+  rows: number;
+  preview: Record<string, unknown>[];
+}
+
+export interface MultiSheetResponse {
+  file_id: string;
+  filename: string;
+  sheet_names: string[];
+  selected_sheets: SheetData[];
+}
+
+/**
+ * 选择 Excel 文件的多个 sheet
+ */
+export async function selectMultipleSheets(fileId: string, sheetNames: string[]): Promise<MultiSheetResponse> {
+  const response = await fetch(`${API_BASE}/api/files/${fileId}/select-sheets`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ sheet_names: sheetNames }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || "选择 Sheet 失败");
   }
 
   return response.json();
@@ -92,13 +163,21 @@ export async function getSessions(
 }
 
 /**
- * 创建新会话（支持多文件）
+ * 创建新会话（支持多文件和文件元信息）
  */
-export async function createSession(title?: string, fileIds?: string[]): Promise<SessionInfo> {
+export async function createSession(
+  title?: string,
+  fileIds?: string[],
+  fileMetadata?: FileMetadataInfo[]
+): Promise<SessionInfo> {
   const response = await fetch(`${API_BASE}/api/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title, file_ids: fileIds }),
+    body: JSON.stringify({
+      title,
+      file_ids: fileIds,
+      file_metadata: fileMetadata,
+    }),
   });
   if (!response.ok) {
     const error = await response.json();
@@ -129,6 +208,38 @@ export async function deleteSession(sessionId: string): Promise<void> {
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || "删除会话失败");
+  }
+}
+
+/**
+ * 删除所有会话
+ */
+export async function deleteAllSessions(): Promise<{ deleted_count: number }> {
+  const response = await fetch(`${API_BASE}/api/sessions`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || "删除所有会话失败");
+  }
+  return response.json();
+}
+
+/**
+ * 更新会话的文件元信息
+ */
+export async function updateSessionFileMetadata(
+  sessionId: string,
+  fileMetadata: FileMetadataInfo[]
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/sessions/${sessionId}/file-metadata`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_metadata: fileMetadata }),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || "更新文件元信息失败");
   }
 }
 

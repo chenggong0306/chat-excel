@@ -18,13 +18,18 @@ class ChatHistoryService:
     """对话历史服务"""
 
     @staticmethod
-    async def create_session(file_ids: Optional[List[str]] = None, title: Optional[str] = None) -> ChatSession:
+    async def create_session(
+        file_ids: Optional[List[str]] = None,
+        title: Optional[str] = None,
+        file_metadata: Optional[List[dict]] = None
+    ) -> ChatSession:
         """创建新的对话会话"""
         async with async_session_maker() as session:
             chat_session = ChatSession(
                 id=str(uuid.uuid4()),
                 file_ids=file_ids or [],
-                title=title or "新对话"
+                title=title or "新对话",
+                file_metadata=file_metadata or []
             )
             session.add(chat_session)
             await session.commit()
@@ -189,6 +194,32 @@ class ChatHistoryService:
             return False
 
     @staticmethod
+    async def delete_all_sessions() -> int:
+        """删除所有会话，返回删除的数量"""
+        async with async_session_maker() as session:
+            # 获取所有会话ID用于清除缓存
+            result = await session.execute(select(ChatSession.id))
+            session_ids = [row[0] for row in result.fetchall()]
+
+            # 删除所有会话（级联删除消息）
+            deleted_count = len(session_ids)
+            if deleted_count > 0:
+                await session.execute(
+                    ChatSession.__table__.delete()
+                )
+                await session.commit()
+
+                # 清除所有相关缓存
+                try:
+                    for sid in session_ids:
+                        await redis_client.delete(f"session:detail:{sid}")
+                    await ChatHistoryService._invalidate_sessions_cache()
+                except Exception:
+                    pass
+
+            return deleted_count
+
+    @staticmethod
     async def add_message(
         session_id: str,
         role: MessageRole,
@@ -271,6 +302,25 @@ class ChatHistoryService:
                     current_files.append(file_id)
                     chat_session.file_ids = current_files
                     await session.commit()
+                return True
+            return False
+
+    @staticmethod
+    async def update_session_file_metadata(session_id: str, file_metadata: List[dict]) -> bool:
+        """更新会话的文件元信息"""
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(ChatSession).where(ChatSession.id == session_id)
+            )
+            chat_session = result.scalar_one_or_none()
+            if chat_session:
+                chat_session.file_metadata = file_metadata
+                await session.commit()
+                # 使缓存失效
+                try:
+                    await redis_client.delete(f"session:detail:{session_id}")
+                except Exception:
+                    pass
                 return True
             return False
 
