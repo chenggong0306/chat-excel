@@ -1,4 +1,48 @@
-const API_BASE = "http://localhost:8000";
+// 使用相对路径，通过 Nginx 代理 API 请求
+// 本地开发时需要修改为 "http://localhost:8000"
+const API_BASE = "";
+
+/**
+ * 生成 UUID v4（兼容所有浏览器）
+ */
+function generateUUID(): string {
+  // 使用 crypto.getRandomValues 生成随机数，兼容性更好
+  const array = new Uint8Array(16);
+  crypto.getRandomValues(array);
+  // 设置版本号 (4) 和变体位
+  array[6] = (array[6] & 0x0f) | 0x40;
+  array[8] = (array[8] & 0x3f) | 0x80;
+  // 转换为 UUID 字符串格式
+  const hex = Array.from(array, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
+ * 获取或生成客户端唯一标识
+ * 用于简单的用户隔离，同一浏览器的数据保持一致
+ */
+function getClientId(): string {
+  const storageKey = "chat_excel_client_id";
+  let clientId = localStorage.getItem(storageKey);
+  if (!clientId) {
+    clientId = generateUUID();
+    localStorage.setItem(storageKey, clientId);
+  }
+  return clientId;
+}
+
+/**
+ * 获取带 client_id 的请求头
+ */
+function getHeaders(includeContentType = false): HeadersInit {
+  const headers: HeadersInit = {
+    "X-Client-ID": getClientId(),
+  };
+  if (includeContentType) {
+    headers["Content-Type"] = "application/json";
+  }
+  return headers;
+}
 
 export interface UploadResponse {
   file_id: string;
@@ -60,6 +104,9 @@ export async function uploadFile(file: File, sheetName?: string): Promise<Upload
 
   const response = await fetch(url, {
     method: "POST",
+    headers: {
+      "X-Client-ID": getClientId(),
+    },
     body: formData,
   });
 
@@ -77,6 +124,7 @@ export async function uploadFile(file: File, sheetName?: string): Promise<Upload
 export async function switchSheet(fileId: string, sheetName: string): Promise<UploadResponse> {
   const response = await fetch(`${API_BASE}/api/files/${fileId}/switch-sheet?sheet_name=${encodeURIComponent(sheetName)}`, {
     method: "POST",
+    headers: getHeaders(),
   });
 
   if (!response.ok) {
@@ -112,9 +160,7 @@ export interface MultiSheetResponse {
 export async function selectMultipleSheets(fileId: string, sheetNames: string[]): Promise<MultiSheetResponse> {
   const response = await fetch(`${API_BASE}/api/files/${fileId}/select-sheets`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: getHeaders(true),
     body: JSON.stringify({ sheet_names: sheetNames }),
   });
 
@@ -154,7 +200,9 @@ export async function getSessions(
   if (search) {
     params.append("search", search);
   }
-  const response = await fetch(`${API_BASE}/api/sessions?${params}`);
+  const response = await fetch(`${API_BASE}/api/sessions?${params}`, {
+    headers: getHeaders(),
+  });
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || "获取会话列表失败");
@@ -172,7 +220,7 @@ export async function createSession(
 ): Promise<SessionInfo> {
   const response = await fetch(`${API_BASE}/api/sessions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getHeaders(true),
     body: JSON.stringify({
       title,
       file_ids: fileIds,
@@ -190,7 +238,9 @@ export async function createSession(
  * 获取会话详情
  */
 export async function getSessionDetail(sessionId: string): Promise<SessionDetail> {
-  const response = await fetch(`${API_BASE}/api/sessions/${sessionId}`);
+  const response = await fetch(`${API_BASE}/api/sessions/${sessionId}`, {
+    headers: getHeaders(),
+  });
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || "获取会话详情失败");
@@ -204,6 +254,7 @@ export async function getSessionDetail(sessionId: string): Promise<SessionDetail
 export async function deleteSession(sessionId: string): Promise<void> {
   const response = await fetch(`${API_BASE}/api/sessions/${sessionId}`, {
     method: "DELETE",
+    headers: getHeaders(),
   });
   if (!response.ok) {
     const error = await response.json();
@@ -217,6 +268,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
 export async function deleteAllSessions(): Promise<{ deleted_count: number }> {
   const response = await fetch(`${API_BASE}/api/sessions`, {
     method: "DELETE",
+    headers: getHeaders(),
   });
   if (!response.ok) {
     const error = await response.json();
@@ -234,7 +286,7 @@ export async function updateSessionFileMetadata(
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/api/sessions/${sessionId}/file-metadata`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: getHeaders(true),
     body: JSON.stringify({ file_metadata: fileMetadata }),
   });
   if (!response.ok) {
@@ -264,7 +316,7 @@ export async function sendChatMessageStream(
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/api/chat/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getHeaders(true),
     body: JSON.stringify(payload),
   });
 
@@ -341,7 +393,9 @@ export async function getCharts(
     page: page.toString(),
     limit: limit.toString(),
   });
-  const response = await fetch(`${API_BASE}/api/charts?${params}`);
+  const response = await fetch(`${API_BASE}/api/charts?${params}`, {
+    headers: getHeaders(),
+  });
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || "获取图表列表失败");
@@ -355,6 +409,7 @@ export async function getCharts(
 export async function deleteChart(messageId: number): Promise<void> {
   const response = await fetch(`${API_BASE}/api/charts/${messageId}`, {
     method: "DELETE",
+    headers: getHeaders(),
   });
   if (!response.ok) {
     const error = await response.json();

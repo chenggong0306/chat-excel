@@ -1,0 +1,57 @@
+# ============================================
+# Docker 忽略文件
+# ============================================
+
+# Git
+.git
+.gitignore
+
+# Node.js
+node_modules
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv
+venv/
+ENV/
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# 测试和文档
+tests/
+docs/
+*.md
+!README.md
+
+# 构建产物
+dist/
+build/
+*.egg-info/
+
+# 本地配置
+.env.local
+.env.*.local
+
+# Docker 相关
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# 其他
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+

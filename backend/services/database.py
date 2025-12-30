@@ -10,7 +10,9 @@ import enum
 load_dotenv()
 
 # 数据库连接配置 - 使用 utf8mb4 支持 emoji
-DATABASE_URL = os.getenv("CHAT_HISTORY_DB_URL", "mysql+aiomysql://root:YKHCQ1w2e3!@192.168.132.104:3307/nai_dx")
+DATABASE_URL = os.getenv("CHAT_HISTORY_DB_URL")
+if not DATABASE_URL:
+    raise ValueError("CHAT_HISTORY_DB_URL environment variable is required")
 
 # 创建异步引擎 - 生产级连接池配置
 engine = create_async_engine(
@@ -55,6 +57,7 @@ class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
     id = Column(String(36), primary_key=True)
+    client_id = Column(String(36), nullable=True, index=True, comment="客户端标识，用于用户隔离")
     title = Column(String(255), nullable=True, comment="会话标题")
     file_ids = Column(JSON, nullable=True, comment="关联的文件ID数组")
     file_metadata = Column(JSON, nullable=True, comment="文件元信息：[{file_id, filename, sheet_names, selected_sheets}]")
@@ -110,7 +113,31 @@ async def run_migrations():
             else:
                 print("Migration: 'file_metadata' column already exists")
         except Exception as e:
-            print(f"Migration error: {e}")
+            print(f"Migration error (file_metadata): {e}")
+            await session.rollback()
+
+        # 检查 client_id 列是否存在
+        try:
+            result = await session.execute(
+                text("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'chat_sessions' AND COLUMN_NAME = 'client_id'")
+            )
+            exists = result.scalar()
+
+            if not exists:
+                # 添加 client_id 列
+                await session.execute(
+                    text("ALTER TABLE chat_sessions ADD COLUMN client_id VARCHAR(36) NULL COMMENT '客户端标识，用于用户隔离'")
+                )
+                # 添加索引
+                await session.execute(
+                    text("ALTER TABLE chat_sessions ADD INDEX idx_client_id (client_id)")
+                )
+                await session.commit()
+                print("Migration: Added 'client_id' column to chat_sessions table")
+            else:
+                print("Migration: 'client_id' column already exists")
+        except Exception as e:
+            print(f"Migration error (client_id): {e}")
             await session.rollback()
 
 

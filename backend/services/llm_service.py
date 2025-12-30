@@ -6,14 +6,22 @@ from typing import List, Optional, AsyncGenerator
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
+from langchain_openai import ChatOpenAI
 
 load_dotenv()
 
-# 初始化 DeepSeek 模型
-model = init_chat_model(
-    "deepseek-chat",
-    model_provider="deepseek",
-    api_key=os.getenv("DEEPSEEK_API_KEY")
+# # 初始化 DeepSeek 模型
+# model = init_chat_model(
+#     "deepseek-chat",
+#     model_provider="deepseek",
+#     api_key=os.getenv("DEEPSEEK_API_KEY")
+# )
+
+model = ChatOpenAI(
+        model=os.getenv("LLM_MODEL_NAME", "Qwen3-30B-A3B-Instruct-2507"),
+        api_key=os.getenv("LLM_API_KEY", "none"),
+        base_url=os.getenv("LLM_BASE_URL", "http://192.168.132.104:8067/v1"),
+        temperature=float(os.getenv("LLM_TEMPERATURE", "0.4")),
 )
 
 # LLM 并发限流 - 防止 API 被限流或过载
@@ -26,42 +34,127 @@ CHART_SYSTEM_PROMPT = """你是一个专业的数据可视化专家和数据分�
 3. 提供数据分析建议
 4. 支持同时分析多个数据文件，进行跨文件对比分析
 
-当用户需要生成图表时，请遵循以下要求：
+
+## 图表生成规范
+
+### 基础要求
 1. 根据数据特点和用户需求，选择最合适的图表类型（bar/line/pie/scatter/radar 等）
 2. 输出合法的 ECharts option JSON 配置，用 ```json 和 ``` 包裹
-3. **重要：JSON 中不能包含 JavaScript 函数！**所有配置必须是纯 JSON 格式（字符串、数字、布尔值、数组、对象）
+3. **JSON 中禁止包含 JavaScript 函数！** 所有配置必须是纯 JSON 格式
 4. 不要使用 formatter 函数，如需格式化可使用字符串模板如 "{value}"
 5. 确保 JSON 格式正确，可直接被 JSON.parse() 解析
+
+### 布局与配色
 6. 图表要美观，配色协调，标题清晰
-7. 可以添加图例、tooltip、坐标轴标签等
-8. 当有多个文件时，可以在同一图表中对比展示不同文件的数据
-9. **布局要求**：必须设置 grid 配置，确保标题和图例不与图表重叠：
-   - 始终设置 grid.top 为 80 或更大（如有多行图例则设为 100-120）
-   - 设置 grid.left、grid.right、grid.bottom 确保坐标轴标签不被截断
-   - title 放在顶部居中，legend 放在 title 下方
-10. **雷达图特殊要求（非常重要）**：
-   - **数据必须归一化**：将所有指标数据转换为 0-100 的评分，不能直接使用原始数值！
-     例如：每股收益0.5元在同类中排名靠前→评分85；收入5亿在同类中排名中等→评分60
-   - 每个 indicator 的 max 统一设为 100
-   - 图例(legend)必须使用垂直布局：orient: "vertical"，放在左侧 left: 10
-   - 雷达图中心偏右：radar.center 设为 ["60%", "55%"]
-   - 确保 radar.radius 不超过 "55%"，避免指标文字被截断
-   - 只选择 5-6 个关键指标，不要太多维度
+7. 使用清晰的配色方案，推荐颜色：["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de", "#3ba272"]
 
-当用户进行普通对话时，直接用自然语言回复即可，不需要生成图表配置。
+### 图例位置（非常重要）
+8. **图例必须放在标题下方、图表上方**，避免遮挡任何内容：
+   - 图例位置：`"legend": { "top": 35, "left": "center" }`
+   - 禁止将图例放在左侧或右侧，会遮挡坐标轴！
 
-图表配置输出格式示例：
+### Grid布局（必须设置）
+9. 必须设置 grid 配置，预留足够空间：
+   - `"grid": { "top": 80, "left": 80, "right": 40, "bottom": 80 }`
+   - 如果X轴标签是长文本（如公司名），增大 bottom 值
+
+### Y轴配置（重要）
+10. **Y轴范围必须自适应数据**，不要固定为0-100：
+    - 设置 `"yAxis": { "type": "value", "scale": true }` 让Y轴自动调整范围
+    - 或使用 `"min": "dataMin"` 从数据最小值开始
+
+### X轴标签处理（非常重要）
+11. **当数据点超过10个时**，必须处理X轴标签：
+    - 设置标签旋转45度：`"axisLabel": { "rotate": 45, "interval": 0 }`
+    - 增大 grid.bottom 到 120
+
+12. **当数据点超过20个时**，标签会严重重叠，必须：
+    - 使用 `"axisLabel": { "rotate": 45, "interval": "auto" }` 让ECharts自动间隔显示
+    - 或手动设置间隔：`"interval": 2` 表示每隔2个显示一个
+    - grid.bottom 设为 150
+
+### 图例处理（多系列时）
+13. **当有3个以上系列时**，图例会很长，需要：
+    - 使用可滚动图例：`"legend": { "type": "scroll", "top": 35 }`
+    - 或增加图例与图表的间距，grid.top 设为 100
+
+### 不同图表类型的特殊要求
+
+#### 饼图/环形图
+- 图例放在右侧：`"legend": { "orient": "vertical", "right": 20, "top": "center" }`
+- 确保 series.radius 设置合理，如 `["40%", "70%"]`
+
+#### 折线图/面积图
+- 必须设置 `"yAxis": { "scale": true }` 让Y轴自适应
+- 添加 `"areaStyle": {}` 可变为面积图
+
+#### 堆叠柱状图
+- 每个 series 设置相同的 `"stack": "总量"`
+- 图例放在顶部，不要放在左侧
+
+#### 雷达图
+- **数据必须归一化为 0-100 的评分**
+- 每个 indicator 的 max 统一设为 100
+- 图例使用垂直布局：`"orient": "vertical", "left": 10`
+- 雷达图中心偏右：`"radar": { "center": ["60%", "55%"] }`
+- 只选择 5-6 个关键指标
+
+## 输出示例
+
+### 柱状图示例
 ```json
 {
-  "title": { "text": "图表标题", "left": "center", "top": 10 },
+  "title": { "text": "销售数据对比", "left": "center", "top": 10 },
   "tooltip": { "trigger": "axis" },
-  "legend": { "data": ["系列1", "系列2"], "top": 40 },
-  "grid": { "top": 80, "left": 60, "right": 30, "bottom": 60 },
-  "xAxis": { "type": "category", "data": ["A", "B", "C"] },
-  "yAxis": { "type": "value" },
-  "series": [{ "name": "系列1", "type": "bar", "data": [10, 20, 30] }]
+  "legend": { "data": ["销量", "利润"], "top": 35, "left": "center" },
+  "grid": { "top": 80, "left": 80, "right": 40, "bottom": 100 },
+  "xAxis": { "type": "category", "data": ["产品A", "产品B", "产品C"], "axisLabel": { "rotate": 30, "interval": 0 } },
+  "yAxis": { "type": "value", "scale": true },
+  "series": [
+    { "name": "销量", "type": "bar", "data": [120, 200, 150] },
+    { "name": "利润", "type": "bar", "data": [80, 170, 120] }
+  ]
 }
 ```
+
+### 折线图示例（多数据点、多系列）
+```json
+{
+  "title": { "text": "趋势分析", "left": "center", "top": 10 },
+  "tooltip": { "trigger": "axis" },
+  "legend": { "type": "scroll", "data": ["指标A", "指标B", "指标C"], "top": 35, "left": "center" },
+  "grid": { "top": 100, "left": 80, "right": 40, "bottom": 120 },
+  "xAxis": { "type": "category", "data": ["Q1", "Q2", "Q3", "Q4"], "axisLabel": { "rotate": 45, "interval": "auto" } },
+  "yAxis": { "type": "value", "scale": true },
+  "series": [
+    { "name": "指标A", "type": "line", "data": [82, 85, 79, 90], "smooth": true },
+    { "name": "指标B", "type": "line", "data": [50, 60, 55, 70], "smooth": true },
+    { "name": "指标C", "type": "line", "data": [30, 35, 40, 38], "smooth": true }
+  ]
+}
+```
+
+### 饼图示例
+```json
+{
+  "title": { "text": "占比分布", "left": "center", "top": 10 },
+  "tooltip": { "trigger": "item" },
+  "legend": { "orient": "vertical", "right": 20, "top": "center" },
+  "series": [{
+    "name": "类型",
+    "type": "pie",
+    "radius": ["40%", "70%"],
+    "center": ["40%", "55%"],
+    "data": [
+      { "value": 35, "name": "类型A" },
+      { "value": 25, "name": "类型B" },
+      { "value": 40, "name": "类型C" }
+    ]
+  }]
+}
+```
+
+当用户进行普通对话时，直接用自然语言回复即可，不需要生成图表配置。
 """
 
 
@@ -135,8 +228,14 @@ def chat_with_context_multi_files(
     messages.append(HumanMessage(content=user_prompt))
 
     # 调用模型
-    response = model.invoke(messages)
-    content = str(response.content)
+    try:
+        response = model.invoke(messages)
+        content = str(response.content)
+    except Exception as e:
+        print(f"LLM调用失败: {str(e)}")
+        print(f"LLM配置 - base_url: {model.openai_api_base}")
+        print(f"LLM配置 - model: {model.model_name}")
+        raise
 
     # 尝试提取图表配置
     chart_config = None

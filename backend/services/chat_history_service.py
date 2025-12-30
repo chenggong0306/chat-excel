@@ -21,12 +21,14 @@ class ChatHistoryService:
     async def create_session(
         file_ids: Optional[List[str]] = None,
         title: Optional[str] = None,
-        file_metadata: Optional[List[dict]] = None
+        file_metadata: Optional[List[dict]] = None,
+        client_id: Optional[str] = None
     ) -> ChatSession:
         """创建新的对话会话"""
         async with async_session_maker() as session:
             chat_session = ChatSession(
                 id=str(uuid.uuid4()),
+                client_id=client_id,
                 file_ids=file_ids or [],
                 title=title or "新对话",
                 file_metadata=file_metadata or []
@@ -36,17 +38,22 @@ class ChatHistoryService:
             await session.refresh(chat_session)
 
             # 使会话列表缓存失效
-            await ChatHistoryService._invalidate_sessions_cache()
+            await ChatHistoryService._invalidate_sessions_cache(client_id)
 
             return chat_session
 
     @staticmethod
-    async def _invalidate_sessions_cache():
-        """使所有会话列表缓存失效"""
+    async def _invalidate_sessions_cache(client_id: Optional[str] = None):
+        """使会话列表缓存失效"""
         try:
-            # 删除所有以 sessions:list: 开头的缓存
-            async for key in redis_client.scan_iter(match="sessions:list:*"):
-                await redis_client.delete(key)
+            if client_id:
+                # 只删除该 client_id 的缓存
+                async for key in redis_client.scan_iter(match=f"sessions:list:{client_id}:*"):
+                    await redis_client.delete(key)
+            else:
+                # 删除所有会话列表缓存
+                async for key in redis_client.scan_iter(match="sessions:list:*"):
+                    await redis_client.delete(key)
         except Exception:
             pass
 
@@ -98,11 +105,12 @@ class ChatHistoryService:
     async def get_sessions_paginated(
         page: int = 1,
         limit: int = 9,
-        search: Optional[str] = None
+        search: Optional[str] = None,
+        client_id: Optional[str] = None
     ) -> Tuple[List[ChatSession], int]:
-        """分页获取会话列表，支持搜索（带 Redis 缓存）"""
-        # 构建缓存 key
-        cache_key = f"sessions:list:{page}:{limit}:{search or ''}"
+        """分页获取会话列表，支持搜索和 client_id 过滤（带 Redis 缓存）"""
+        # 构建缓存 key（包含 client_id）
+        cache_key = f"sessions:list:{client_id or 'all'}:{page}:{limit}:{search or ''}"
 
         # 尝试从 Redis 获取缓存
         try:
@@ -118,6 +126,11 @@ class ChatHistoryService:
             # 基础查询
             query = select(ChatSession)
             count_query = select(func.count(ChatSession.id))
+
+            # client_id 过滤
+            if client_id:
+                query = query.where(ChatSession.client_id == client_id)
+                count_query = count_query.where(ChatSession.client_id == client_id)
 
             # 搜索过滤
             if search:
@@ -172,7 +185,7 @@ class ChatHistoryService:
             }
 
     @staticmethod
-    async def delete_session(session_id: str) -> bool:
+    async def delete_session(session_id: str, client_id: Optional[str] = None) -> bool:
         """删除会话"""
         async with async_session_maker() as session:
             result = await session.execute(
@@ -186,7 +199,7 @@ class ChatHistoryService:
                 # 使缓存失效
                 try:
                     await redis_client.delete(f"session:detail:{session_id}")
-                    await ChatHistoryService._invalidate_sessions_cache()
+                    await ChatHistoryService._invalidate_sessions_cache(client_id)
                 except Exception:
                     pass
 
@@ -194,26 +207,32 @@ class ChatHistoryService:
             return False
 
     @staticmethod
-    async def delete_all_sessions() -> int:
-        """删除所有会话，返回删除的数量"""
+    async def delete_all_sessions(client_id: Optional[str] = None) -> int:
+        """删除会话，如果指定 client_id 则只删除该用户的会话"""
         async with async_session_maker() as session:
-            # 获取所有会话ID用于清除缓存
-            result = await session.execute(select(ChatSession.id))
+            # 构建查询条件
+            query = select(ChatSession.id)
+            if client_id:
+                query = query.where(ChatSession.client_id == client_id)
+
+            result = await session.execute(query)
             session_ids = [row[0] for row in result.fetchall()]
 
-            # 删除所有会话（级联删除消息）
+            # 删除会话（级联删除消息）
             deleted_count = len(session_ids)
             if deleted_count > 0:
-                await session.execute(
-                    ChatSession.__table__.delete()
-                )
+                from sqlalchemy import delete
+                delete_query = delete(ChatSession)
+                if client_id:
+                    delete_query = delete_query.where(ChatSession.client_id == client_id)
+                await session.execute(delete_query)
                 await session.commit()
 
-                # 清除所有相关缓存
+                # 清除相关缓存
                 try:
                     for sid in session_ids:
                         await redis_client.delete(f"session:detail:{sid}")
-                    await ChatHistoryService._invalidate_sessions_cache()
+                    await ChatHistoryService._invalidate_sessions_cache(client_id)
                 except Exception:
                     pass
 
@@ -393,25 +412,35 @@ class ChartService:
     @staticmethod
     async def get_all_charts(
         page: int = 1,
-        limit: int = 9
+        limit: int = 9,
+        client_id: Optional[str] = None
     ) -> Tuple[List[dict], int]:
-        """获取所有保存的图表（从消息中提取有 chart_config 的记录）"""
+        """获取所有保存的图表（从消息中提取有 chart_config 的记录，按 client_id 过滤）"""
         async with async_session_maker() as session:
-            # 查询有图表配置的消息
+            # 查询有图表配置的消息，通过 JOIN session 来过滤 client_id
             query = (
                 select(ChatMessage, ChatSession.title)
                 .join(ChatSession, ChatMessage.session_id == ChatSession.id)
                 .where(ChatMessage.chart_config.isnot(None))
                 .where(ChatMessage.role == MessageRole.ASSISTANT)
-                .order_by(desc(ChatMessage.created_at))
             )
+
+            # 按 client_id 过滤
+            if client_id:
+                query = query.where(ChatSession.client_id == client_id)
+
+            query = query.order_by(desc(ChatMessage.created_at))
 
             # 获取总数
             count_query = (
                 select(func.count(ChatMessage.id))
+                .join(ChatSession, ChatMessage.session_id == ChatSession.id)
                 .where(ChatMessage.chart_config.isnot(None))
                 .where(ChatMessage.role == MessageRole.ASSISTANT)
             )
+            if client_id:
+                count_query = count_query.where(ChatSession.client_id == client_id)
+
             total_result = await session.execute(count_query)
             total = total_result.scalar() or 0
 
@@ -442,12 +471,19 @@ class ChartService:
             return charts, total
 
     @staticmethod
-    async def delete_chart(message_id: int) -> bool:
-        """删除图表（清除消息的 chart_config）"""
+    async def delete_chart(message_id: int, client_id: Optional[str] = None) -> bool:
+        """删除图表（清除消息的 chart_config，验证 client_id 权限）"""
         async with async_session_maker() as session:
-            result = await session.execute(
-                select(ChatMessage).where(ChatMessage.id == message_id)
+            # 通过 JOIN 验证 client_id 权限
+            query = (
+                select(ChatMessage)
+                .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+                .where(ChatMessage.id == message_id)
             )
+            if client_id:
+                query = query.where(ChatSession.client_id == client_id)
+
+            result = await session.execute(query)
             message = result.scalar_one_or_none()
             if message:
                 message.chart_config = None

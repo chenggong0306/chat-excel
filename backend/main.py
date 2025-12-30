@@ -33,6 +33,25 @@ from services.redis_service import (
 limiter = Limiter(key_func=get_remote_address)
 
 
+def clean_dataframe_for_llm(df: pd.DataFrame) -> str:
+    """
+    清洗 DataFrame 并转换为字符串，用于传递给 LLM。
+    移除回车符、换行符等特殊字符，避免图表图例出现乱码。
+    """
+    # 复制 DataFrame 避免修改原始数据
+    df_clean = df.copy()
+
+    # 遍历所有列，清洗字符串类型的数据
+    for col in df_clean.columns:
+        if df_clean[col].dtype == 'object':
+            # 清洗字符串：移除 \r\n，替换多余空格
+            df_clean[col] = df_clean[col].astype(str).str.replace(r'[\r\n]+', ' ', regex=True)
+            df_clean[col] = df_clean[col].str.replace(r'\s+', ' ', regex=True)
+            df_clean[col] = df_clean[col].str.strip()
+
+    return df_clean.to_string(index=False)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -55,17 +74,29 @@ app = FastAPI(title="ChatExcel API", version="1.0.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# 跨域配置
+# 跨域配置 - 支持 Docker 部署
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174"],
+    allow_origins=["*"],  # Docker 部署时允许所有来源（Nginx 会处理）
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
+# 健康检查端点 - 用于 Docker 健康检查和负载均衡
+@app.get("/health")
+async def health_check():
+    """健康检查端点"""
+    return {"status": "healthy", "service": "chatexcel-backend"}
+
 # 本地内存缓存（Redis 不可用时的降级方案）
 local_file_cache: dict[str, pd.DataFrame] = {}
+
+
+def get_client_id(request: Request) -> str:
+    """从请求头获取 client_id，用于用户隔离"""
+    return request.headers.get("X-Client-ID", "anonymous")
 
 
 # 多轮对话相关模型
@@ -359,8 +390,10 @@ async def select_multiple_sheets(file_id: str, req: MultiSheetRequest):
 # ==================== 多轮对话 API ====================
 
 @app.post("/api/sessions", response_model=SessionResponse)
-async def create_session(req: CreateSessionRequest):
+async def create_session(req: CreateSessionRequest, request: Request):
     """创建新的对话会话"""
+    client_id = get_client_id(request)
+
     # 转换文件元信息为字典格式
     file_metadata_dicts = None
     if req.file_metadata:
@@ -369,7 +402,8 @@ async def create_session(req: CreateSessionRequest):
     session = await ChatHistoryService.create_session(
         file_ids=req.file_ids,
         title=req.title,
-        file_metadata=file_metadata_dicts
+        file_metadata=file_metadata_dicts,
+        client_id=client_id
     )
     return SessionResponse(
         id=session.id,
@@ -383,15 +417,19 @@ async def create_session(req: CreateSessionRequest):
 
 @app.get("/api/sessions")
 async def list_sessions(
+    request: Request,
     page: int = 1,
     limit: int = 9,
     search: Optional[str] = None
 ):
-    """获取会话列表（支持分页和搜索）"""
+    """获取会话列表（支持分页和搜索，按 client_id 过滤）"""
+    client_id = get_client_id(request)
+
     sessions, total = await ChatHistoryService.get_sessions_paginated(
         page=page,
         limit=limit,
-        search=search
+        search=search,
+        client_id=client_id
     )
     return {
         "items": [
@@ -439,18 +477,20 @@ async def get_session(session_id: str):
 
 
 @app.delete("/api/sessions/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str, request: Request):
     """删除会话"""
-    success = await ChatHistoryService.delete_session(session_id)
+    client_id = get_client_id(request)
+    success = await ChatHistoryService.delete_session(session_id, client_id=client_id)
     if not success:
         raise HTTPException(status_code=404, detail="会话不存在")
     return {"message": "会话已删除"}
 
 
 @app.delete("/api/sessions")
-async def delete_all_sessions():
-    """删除所有会话"""
-    deleted_count = await ChatHistoryService.delete_all_sessions()
+async def delete_all_sessions(request: Request):
+    """删除当前用户的所有会话"""
+    client_id = get_client_id(request)
+    deleted_count = await ChatHistoryService.delete_all_sessions(client_id=client_id)
     return {"message": f"已删除 {deleted_count} 个会话", "deleted_count": deleted_count}
 
 
@@ -507,7 +547,7 @@ async def chat(req: ChatRequest):
                 "file_id": data_source_id,
                 "filename": filename,
                 "columns": df.columns.tolist(),
-                "data": df.to_string(index=False)
+                "data": clean_dataframe_for_llm(df)
             })
         except Exception:
             continue  # 跳过无法加载的文件
@@ -598,7 +638,7 @@ async def chat_stream(request: Request, req: ChatRequest):
                 "file_id": data_source_id,
                 "filename": filename,
                 "columns": df.columns.tolist(),
-                "data": df.to_string(index=False)
+                "data": clean_dataframe_for_llm(df)
             })
         except Exception:
             continue
@@ -664,9 +704,10 @@ async def chat_stream(request: Request, req: ChatRequest):
 # ==================== 图表管理 API ====================
 
 @app.get("/api/charts")
-async def list_charts(page: int = 1, limit: int = 9):
-    """获取所有保存的图表"""
-    charts, total = await ChartService.get_all_charts(page=page, limit=limit)
+async def list_charts(request: Request, page: int = 1, limit: int = 9):
+    """获取当前用户的所有保存的图表"""
+    client_id = get_client_id(request)
+    charts, total = await ChartService.get_all_charts(page=page, limit=limit, client_id=client_id)
     return {
         "items": charts,
         "total": total,
@@ -677,9 +718,10 @@ async def list_charts(page: int = 1, limit: int = 9):
 
 
 @app.delete("/api/charts/{message_id}")
-async def delete_chart(message_id: int):
+async def delete_chart(request: Request, message_id: int):
     """删除图表"""
-    success = await ChartService.delete_chart(message_id)
+    client_id = get_client_id(request)
+    success = await ChartService.delete_chart(message_id, client_id=client_id)
     if not success:
         raise HTTPException(status_code=404, detail="图表不存在")
     return {"message": "图表已删除"}
@@ -687,5 +729,6 @@ async def delete_chart(message_id: int):
 
 if __name__ == "__main__":
     import uvicorn
+    # uvicorn.run("main:app", host="192.168.132.104", port=9011, reload=True)
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
 

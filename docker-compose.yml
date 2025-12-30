@@ -1,0 +1,85 @@
+# ============================================
+# ChatExcel Docker Compose 配置
+# 使用外部 MySQL 和 Redis 服务
+# 前端: 9012, 后端: 9011
+# ============================================
+
+version: '3.8'
+
+services:
+  # -------- 前端服务 (Nginx + React) --------
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: chatexcel-frontend:latest
+    container_name: chatexcel-frontend
+    ports:
+      - "${FRONTEND_PORT:-9012}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - chatexcel-network
+    restart: unless-stopped
+    # 日志配置 - 限制日志大小防止磁盘占满
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # -------- 后端服务 (FastAPI) --------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: chatexcel-backend:latest
+    container_name: chatexcel-backend
+    ports:
+      - "${BACKEND_PORT:-9011}:8000"
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - chatexcel-network
+    restart: unless-stopped
+    # 访问外部服务需要的网络配置
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "192.168.132.104:host-gateway"  # 直接映射宿主机IP
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    # 资源限制（可选，根据服务器配置调整）
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+# -------- 网络 --------
+networks:
+  chatexcel-network:
+    name: chatexcel-network
+    driver: bridge
+

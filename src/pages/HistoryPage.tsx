@@ -37,7 +37,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onNavigate, onOpenSess
 
   // 搜索
   const [searchQuery, setSearchQuery] = useState("");
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 加载会话
   const loadSessions = useCallback(async (page: number, append: boolean = false, query?: string) => {

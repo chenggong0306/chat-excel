@@ -9,7 +9,10 @@ from sqlalchemy import text
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("CHAT_HISTORY_DB_URL", "mysql+aiomysql://root:YKHCQ1w2e3!@192.168.132.104:3307/nai_dx")
+
+DATABASE_URL = os.getenv("CHAT_HISTORY_DB_URL")
+if not DATABASE_URL:
+    raise ValueError("CHAT_HISTORY_DB_URL environment variable is required")
 
 engine = create_async_engine(DATABASE_URL, echo=True)
 
